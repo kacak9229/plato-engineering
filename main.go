@@ -5,14 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	mathRandom "math/rand"
+	"os"
 	"time"
 )
-
-type producer struct {
-	// createWidget time.Time
-	name    string
-	setTime time.Time
-}
 
 type widget struct {
 	id     string
@@ -21,22 +17,14 @@ type widget struct {
 	broken bool
 }
 
-type consumer struct {
-	name string
-}
-
 // Flags for widgets, producers, consumers, number of widgets_broken
 var widgetFlag int
 var producerFlag int
 var consumerFlag int
 var widgetBrokenFlag int
 
-// Array of Structs
-var arrayOfProducers []producer
-var arrayOfWidgets []widget
-var arrayOfConsumers []consumer
+var widgets map[int]widget
 
-// Command line for flagging
 func commandFlag() {
 	flag.IntVar(&widgetFlag, "n", 0, "an int")
 	flag.IntVar(&producerFlag, "p", 0, "an int")
@@ -57,122 +45,84 @@ func generateUUID() string {
 	return uuid
 }
 
-// func consumerConsumes() {
-
-// 	msg := "%s consumes [%s source=%s time=%s broken=%t] in %f time"
-// 	c := consumer{name: "consumer_55"}
-// 	p := producer{createWidget: time.Now(), name: "producer_1"}
-// 	w := widget{id: generateUUID(), source: p.name, time: p.createWidget, broken: false}
-// 	fmt.Printf(msg, c.name, w.id, p.name, string(w.time.Format("15:04:05.999999")), w.broken, 22.33)
-// 	fmt.Println("")
-// }
-
-// Function to produce the producers + widgets + consumers
-// The algorithm every producer will be given a specific time to create the widget
-func createProducer(x int) []producer {
-	for i := 0; i <= x; i++ {
-		producerNumber := fmt.Sprintf("producer_%d", i)
-		p := producer{name: producerNumber}
-		arrayOfProducers = append(arrayOfProducers, p)
-	}
-
-	return arrayOfProducers
+// Time difference
+func timeDifference(widgetCreated time.Time, consumerConsume time.Time) time.Duration {
+	diff := widgetCreated.Sub(consumerConsume)
+	return diff
 }
 
-// Need to use Interface
-func createConsumer(x int) []consumer {
-	for i := 0; i <= x; i++ {
-		consumerNumber := fmt.Sprintf("consumer_%d", i)
-		c := consumer{name: consumerNumber}
-		arrayOfConsumers = append(arrayOfConsumers, c)
-	}
-
-	return arrayOfConsumers
+// It will randomly select true or else
+func randBool() bool {
+	return mathRandom.Int()%2 == 0
 }
 
-func producerSetTime(producers []producer, c chan producer) {
-	for _, p := range producers {
-		go func(p producer) {
-			p.setTime = time.Now()
-			fmt.Println(p)
-			c <- p
-		}(p)
+func brokenWidget(widgetFlag int) bool {
+	broken := randBool()
+	if broken && (widgetBrokenFlag > 0) {
+		widgetBrokenFlag -= 1
+		return true
+	}
+	return false
+}
+
+func createWidget(id int, jobs <-chan int, results chan<- int, consumes chan<- widget) {
+	for j := range jobs {
+		producer_id := fmt.Sprintf("producer_%d", id)
+		fmt.Println("producer_", id, "setting time for widget ...")
+		setTime := time.Now()
+		time.Sleep(time.Second * 1)
+		widgetBreaks := brokenWidget(widgetBrokenFlag)
+		w := widget{id: generateUUID(), source: producer_id, time: setTime, broken: widgetBreaks}
+		fmt.Println("producer_", id, "finished creating widget ", w.id, "at", w.time.Format("15:04:05.999999"))
+		time.Sleep(time.Second * 1)
+		results <- j
+		consumes <- w
 	}
 }
 
-func createWidget(c chan producer, broken bool, consumer chan widget) {
-	producer := <-c
-	w := widget{id: generateUUID(), source: producer.name, time: producer.setTime, broken: broken}
-	// fmt.Println(w)
-	consumer <- w
+func widgetQuality(brokenWidget bool, consumer_id string, widgetId string, widgetProducer string, t time.Time, timeConsume time.Duration) {
+	if brokenWidget {
+		fmt.Println(consumer_id, "consumes [id=", widgetId, "source=", widgetProducer, "time=", t.Format("15:04:05.999999"), "broken=", brokenWidget, "-- stopping production [execution stops]")
+		time.Sleep(time.Second * 2)
+		os.Exit(0)
+	}
+	fmt.Println(consumer_id, "consumes [id=", widgetId, "source=", widgetProducer, "time=", t.Format("15:04:05.999999"), "broken=", brokenWidget, "in", timeConsume, "time")
 }
 
-// Create a struct of Widget and Producer or for loop the Consumer struct
-func consumerConsume(c chan widget, consumerNumber int) {
-	// message := fmt.Printf("consumer consumes", <-c)
-	consumer := arrayOfConsumers[consumerNumber]
-	widget := <-c
-	msg := "%s consumes [%s source=%s time=%s broken=%t] in %f time"
-	fmt.Printf(msg, consumer.name, widget.id, widget.source, string(widget.time.Format("15:04:05.999999")), widget.broken, 22.33)
-	fmt.Println("")
+func consumerConsume(id int, results <-chan int, done chan<- widget, consumes <-chan widget) {
+	for w := range consumes {
+		consumer_id := fmt.Sprintf("consumer_%d", id)
+		consumerConsume := time.Now()
+		timeConsume := timeDifference(consumerConsume, w.time)
+		widgetQuality(w.broken, consumer_id, w.id, w.source, w.time, timeConsume)
+		done <- w
+	}
 }
 
 func main() {
-
 	commandFlag()
 	flag.Parse()
-	fmt.Println("Widgets", widgetFlag)
-	fmt.Println("Producers", producerFlag)
-	fmt.Println("Consumers", consumerFlag)
-	fmt.Println("Widgets Broken", widgetBrokenFlag)
 
-	producerC := make(chan producer)
-	// consumerC := make(chan consumer)
-	widgetC := make(chan widget)
+	jobs := make(chan int, 100)
+	results := make(chan int, 100)
+	consumes := make(chan widget, 100)
+	done := make(chan widget, 100)
 
-	// Blocking
-	createProducer(producerFlag)
-	// Blocking
-	createConsumer(consumerFlag)
-
-	// Blocking
-	for _, p := range arrayOfProducers {
-		fmt.Println(p.name)
+	for w := 1; w <= producerFlag; w++ {
+		go createWidget(w, jobs, results, consumes)
 	}
 
-	// Blocking
-	for _, c := range arrayOfConsumers {
-		fmt.Println(c.name)
+	for j := 1; j <= widgetFlag; j++ {
+		jobs <- j
+	}
+	// close(jobs)
+
+	for c := 1; c <= consumerFlag; c++ {
+		go consumerConsume(c, results, done, consumes)
 	}
 
-	producerSetTime(arrayOfProducers, producerC)
-
-	for {
-		go createWidget(producerC, false, widgetC)
-		go consumerConsume(widgetC, 0)
+	for a := 1; a <= widgetFlag; a++ {
+		<-done
 	}
 
-	// Create a widget here by producer because producer has to set the time
-
-	// d := 100 * time.Microsecond
-	// fmt.Println(d)
-	// fmt.Println(float64(time.Now().Nanosecond()) / 1000)
-	// consumerConsumes()
-	// createProducer(10)
-	// fmt.Println(arrayOfProducers)
-}
-
-func chanelExample() {
-	c := make(chan string)
-
-	for i := 1; i <= 10; i++ {
-		go func() {
-			c <- time.Now().Format("15:04:05.999999")
-		}()
-	}
-
-	for i := 1; i <= 10; i++ {
-		msg := <-c
-		fmt.Println(msg)
-	}
 }
