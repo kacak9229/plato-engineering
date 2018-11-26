@@ -10,7 +10,14 @@ import (
 	"time"
 )
 
-// Struct based on the requirement
+type producer struct {
+	id string
+}
+
+type consumer struct {
+	id string
+}
+
 type widget struct {
 	id     string
 	source string
@@ -18,28 +25,21 @@ type widget struct {
 	broken bool
 }
 
-// Flags for widgets, producers, consumers, number of widgets_broken
 var widgetFlag int
 var producerFlag int
 var consumerFlag int
 var widgetBrokenFlag int
 
-/*
-1. Function to store all the flags to be input on terminal
-2. Example - go run main.go -n 10 -p 1 -c 1 -k 3
-*/
-func commandFlag() {
-	flag.IntVar(&widgetFlag, "n", 0, "an int")
-	flag.IntVar(&producerFlag, "p", 0, "an int")
-	flag.IntVar(&consumerFlag, "c", 0, "an int")
-	flag.IntVar(&widgetBrokenFlag, "k", 0, "an int")
+func (w *widget) isWidgetBroken(widgetFlag int) bool {
+	broken := mathRandom.Int()%2 == 0
+	if broken && (widgetFlag > 0) {
+		widgetFlag--
+		return true
+	}
+	return false
 }
 
-/*
-1. Generate Unique universal ID for each widget
-2. Example UUID - 91f023ae62e42b44-af6103c770dc1dda
-*/
-func generateUUID() string {
+func (w *widget) generateUUID() {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)
 	if err != nil {
@@ -48,110 +48,97 @@ func generateUUID() string {
 
 	uuid := fmt.Sprintf("%x-%x",
 		b[0:8], b[8:])
-	return uuid
+	w.id = uuid
 }
 
-// Time difference between widget creation time and consumer consuming the widget time
-func timeDifference(consumerConsume time.Time, widgetCreated time.Time) time.Duration {
-	timeDiff := consumerConsume.Sub(widgetCreated)
-	return timeDiff
+func hireProducer(number int) producer {
+	id := fmt.Sprintf("producer_%d", number)
+	p := producer{id: id}
+	return p
 }
 
-// It will randomly select true or else
-func randBool() bool {
-	return mathRandom.Int()%2 == 0
+func (p *producer) setTime() time.Time {
+	currentTime := time.Now()
+	return currentTime
 }
 
-// if true and the widgetBrokenFlag is greater than 0 then decrement the widgetBrokenFlag
-func brokenWidget(widgetFlag int) bool {
-	broken := randBool()
-	if broken && (widgetBrokenFlag > 0) {
-		widgetBrokenFlag--
-		return true
-	}
-	return false
+func (p *producer) createWidget() widget {
+	w := widget{}
+	w.generateUUID()
+	w.source = p.id
+	w.time = p.setTime()
+	w.broken = w.isWidgetBroken(widgetBrokenFlag)
+	return w
 }
 
-/*
-THE ALGORITHM:
-1. listen on the job channel (only receiving)
-2. set the time in the setTime variable
-3. use brokenWidget function to randomly grab true or false
-4. create widget object and store all the value in the respective attribute
-5. Finally send to both consumes channel
-*/
-func createWidget(id int, jobs <-chan int, consumes chan<- widget) {
-	// jobs is a receving channel only
-	for range jobs {
-		producerID := fmt.Sprintf("producer_%d", id)
-		fmt.Println("producer_", id, "setting time for widget ...")
-		// time.Sleep(time.Second * 1)
-		setTime := time.Now()
-		IswidgetBroken := brokenWidget(widgetBrokenFlag)
-		w := widget{id: generateUUID(), source: producerID, time: setTime, broken: IswidgetBroken}
-		fmt.Println("producer_", id, "finished creating widget ", w.id, "at", w.time.Format("15:04:05.999999"))
-		// time.Sleep(time.Second * 1)
-
-		consumes <- w
-	}
+func consumerEnterTheShop(number int) consumer {
+	id := fmt.Sprintf("consumer_%d", number)
+	c := consumer{id: id}
+	return c
 }
 
-/*
-THE ALGORITHM:
-1. Check if brokenWidget is true or false
-2. if broken then print out stop production message
-3. else print consumer consumes message
-*/
-func widgetQuality(brokenWidget bool, consumerID string, widgetID string, widgetProducer string, t time.Time, timeConsume time.Duration) {
-	if brokenWidget {
-		fmt.Println(consumerID, "consumes [id=", widgetID, "source=", widgetProducer, "time=", t.Format("15:04:05.999999"), "broken=", brokenWidget, "-- stopping production [execution stops]")
-		// time.Sleep(time.Second * 1)
+func (c *consumer) consumeTime(w time.Time) time.Duration {
+	consumeTime := time.Now().Sub(w)
+	return consumeTime
+}
+
+func (c *consumer) consumeWidget(w widget) {
+	if w.broken {
+		fmt.Println(c.id, "consumes [id=", w.id, "source=", w.source,
+			"time=", w.time.Format("15:04:05.999999"), "broken=", w.broken,
+			"-- stopping production [execution stops]")
 		os.Exit(0)
+	} else {
+		fmt.Println(c.id, "consumes [id=", w.id, "source=", w.source,
+			"time=", w.time.Format("15:04:05.999999"), "broken=", w.broken,
+			"in", c.consumeTime(w.time), "time")
 	}
-	fmt.Println(consumerID, "consumes [id=", widgetID, "source=", widgetProducer, "time=", t.Format("15:04:05.999999"), "broken=", brokenWidget, "in", timeConsume, "time")
 }
 
-/*
-THE ALGORITHM:
-1. Listen on consumes channel
-2. create the time consumer consumes
-3. Use timeDifference function to deduct two different time
-4. call widgetQuality function to see a different message based on true or false of the widget
-5. finally send to done channel
-*/
-func consumerConsume(id int, done chan<- widget, consumes <-chan widget) {
-	for w := range consumes {
-		consumerID := fmt.Sprintf("consumer_%d", id)
-		consumerConsumeTime := time.Now()
-		timeConsume := timeDifference(consumerConsumeTime, w.time)
-		widgetQuality(w.broken, consumerID, w.id, w.source, w.time, timeConsume)
+func startProduction(id int, production <-chan int, shop chan<- widget) {
+	for range production {
+		p := hireProducer(id)
+		fmt.Println(p.id, "is setting up time for the widget ....")
+		time.Sleep(time.Microsecond * 1)
+		fmt.Println(p.id, "is creating the widget ....")
+		time.Sleep(time.Second * 1)
+		w := p.createWidget()
+		fmt.Println(p.id, "finished creating widget", w.id)
+		shop <- w
+	}
+}
+
+func consumerBuying(id int, shop <-chan widget, done chan<- widget) {
+	for w := range shop {
+		consumer := consumerEnterTheShop(id)
+		consumer.consumeWidget(w)
 		done <- w
 	}
 }
 
-/* Main function */
 func main() {
-	commandFlag()
+
+	flag.IntVar(&widgetFlag, "n", 0, "an int")
+	flag.IntVar(&producerFlag, "p", 0, "an int")
+	flag.IntVar(&consumerFlag, "c", 0, "an int")
+	flag.IntVar(&widgetBrokenFlag, "k", 0, "an int")
 	flag.Parse()
 
-	// Create three seperate channels, 1 is for job
-	jobs := make(chan int, 50)
-	consumes := make(chan widget, 50)
-	done := make(chan widget, 50)
+	production := make(chan int, 40)
+	shop := make(chan widget, 40)
+	done := make(chan widget, 40)
 
-	// Loop the producer flag and create a goroutine for widget creation
-	for w := 1; w <= producerFlag; w++ {
-		go createWidget(w, jobs, consumes)
+	for s := 1; s <= producerFlag; s++ {
+		go startProduction(s, production, shop)
 	}
 
-	// Send to job
-	for j := 1; j <= widgetFlag; j++ {
-		jobs <- j
+	// Send to production channel
+	for p := 1; p <= widgetFlag; p++ {
+		production <- p
 	}
 
-	// Loop the producer flag and create a goroutine for consumer consume the widget
 	for c := 1; c <= consumerFlag; c++ {
-		go consumerConsume(c, done, consumes)
+		go consumerBuying(c, shop, done)
 	}
 
 	// Done
